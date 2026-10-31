@@ -4,15 +4,18 @@ import asyncio
 import discord
 
 from datetime import timedelta
+from dotenv import load_dotenv
 from discord.ext import commands
 from discord import app_commands
 from supabase import create_client, Client
-
 
 # ==========================================
 # KNOXBOT
 # Public Discord Management Bot
 # ==========================================
+
+load_dotenv("/home/container/.env")
+load_dotenv()
 
 TOKEN = os.getenv("DISCORD_TOKEN")
 SUPABASE_URL = os.getenv("SUPABASE_URL")
@@ -24,12 +27,10 @@ if not TOKEN:
 if not SUPABASE_URL or not SUPABASE_KEY:
     raise RuntimeError("Missing Supabase environment variables")
 
-
 supabase: Client = create_client(
     SUPABASE_URL,
     SUPABASE_KEY
 )
-
 
 # ==========================================
 # DISCORD CONFIGURATION
@@ -42,33 +43,16 @@ intents.guilds = True
 intents.messages = True
 
 
-class KnoxBot(commands.Bot):
+# Only load modules that are ready for initial integration.
+# We will add the remaining modules after their outstanding
+# persistence and reliability issues have been fixed.
 
-    async def setup_hook(self):
-        synced = await self.tree.sync()
-        print(f"Synced {len(synced)} global slash commands.")
-
-    async def on_ready(self):
-        print("=" * 40)
-        print(f"KnoxBot online: {self.user}")
-        print(f"Servers connected: {len(self.guilds)}")
-        print("=" * 40)
-
-        for guild in self.guilds:
-            await register_guild(guild)
-
-    async def on_guild_join(self, guild):
-        print(f"KnoxBot joined: {guild.name}")
-        await register_guild(guild)
-
-    async def on_guild_remove(self, guild):
-        print(f"KnoxBot removed from: {guild.name}")
-
-
-bot = KnoxBot(
-    command_prefix="!",
-    intents=intents
-)
+EXTENSIONS = [
+    "knoxbot.cogs.welcome",
+    "knoxbot.cogs.moderation",
+    "knoxbot.cogs.logging",
+    "knoxbot.cogs.automod",
+]
 
 
 # ==========================================
@@ -106,6 +90,9 @@ async def save_case(
 ):
     guild = interaction.guild
 
+    if guild is None:
+        return False
+
     await register_guild(guild)
 
     try:
@@ -134,7 +121,6 @@ async def save_case(
 # ==========================================
 
 def can_moderate(interaction, member):
-
     guild = interaction.guild
     moderator = interaction.user
     bot_member = guild.me
@@ -165,7 +151,6 @@ def can_moderate(interaction, member):
 # ==========================================
 
 def moderation_embed(action, member, moderator, reason):
-
     embed = discord.Embed(
         title=f"KnoxBot | {action}",
         color=discord.Color.blurple()
@@ -189,11 +174,57 @@ def moderation_embed(action, member, moderator, reason):
         inline=False
     )
 
-    embed.set_footer(
-        text="KnoxBot Moderation System"
-    )
+    embed.set_footer(text="KnoxBot Moderation System")
 
     return embed
+
+
+# ==========================================
+# BOT CLASS
+# ==========================================
+
+class KnoxBot(commands.Bot):
+
+    async def setup_hook(self):
+
+        print("Loading KnoxBot modules...")
+
+        for extension in EXTENSIONS:
+            try:
+                await self.load_extension(extension)
+                print(f"[LOADED] {extension}")
+
+            except Exception as error:
+                print(f"[FAILED] {extension}: {error}")
+
+        try:
+            synced = await self.tree.sync()
+            print(f"Synced {len(synced)} global slash commands.")
+
+        except Exception as error:
+            print(f"Slash command sync failed: {error}")
+
+    async def on_ready(self):
+        print("=" * 45)
+        print(f"KnoxBot online: {self.user}")
+        print(f"Servers connected: {len(self.guilds)}")
+        print("=" * 45)
+
+        for guild in self.guilds:
+            await register_guild(guild)
+
+    async def on_guild_join(self, guild):
+        print(f"KnoxBot joined: {guild.name}")
+        await register_guild(guild)
+
+    async def on_guild_remove(self, guild):
+        print(f"KnoxBot removed from: {guild.name}")
+
+
+bot = KnoxBot(
+    command_prefix="!",
+    intents=intents
+)
 
 
 # ==========================================
