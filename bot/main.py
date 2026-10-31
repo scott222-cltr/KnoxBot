@@ -3,9 +3,11 @@ import os
 import asyncio
 import discord
 
+from datetime import timedelta
 from discord.ext import commands
 from discord import app_commands
 from supabase import create_client, Client
+
 
 # ==========================================
 # KNOXBOT
@@ -22,7 +24,16 @@ if not TOKEN:
 if not SUPABASE_URL or not SUPABASE_KEY:
     raise RuntimeError("Missing Supabase environment variables")
 
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+
+supabase: Client = create_client(
+    SUPABASE_URL,
+    SUPABASE_KEY
+)
+
+
+# ==========================================
+# DISCORD CONFIGURATION
+# ==========================================
 
 intents = discord.Intents.default()
 intents.members = True
@@ -35,10 +46,7 @@ class KnoxBot(commands.Bot):
 
     async def setup_hook(self):
         synced = await self.tree.sync()
-        print(f"Synced {len(synced)} slash commands.")
-
-        for guild in self.guilds:
-            await register_guild(guild)
+        print(f"Synced {len(synced)} global slash commands.")
 
     async def on_ready(self):
         print("=" * 40)
@@ -46,7 +54,11 @@ class KnoxBot(commands.Bot):
         print(f"Servers connected: {len(self.guilds)}")
         print("=" * 40)
 
+        for guild in self.guilds:
+            await register_guild(guild)
+
     async def on_guild_join(self, guild):
+        print(f"KnoxBot joined: {guild.name}")
         await register_guild(guild)
 
     async def on_guild_remove(self, guild):
@@ -58,6 +70,10 @@ bot = KnoxBot(
     intents=intents
 )
 
+
+# ==========================================
+# DATABASE FUNCTIONS
+# ==========================================
 
 async def database_call(function):
     return await asyncio.to_thread(function)
@@ -74,6 +90,7 @@ async def register_guild(guild):
                 on_conflict="guild_id"
             ).execute()
         )
+
         print(f"Registered server: {guild.name}")
 
     except Exception as error:
@@ -104,6 +121,7 @@ async def save_case(
                 }
             ).execute()
         )
+
         return True
 
     except Exception as error:
@@ -111,26 +129,43 @@ async def save_case(
         return False
 
 
+# ==========================================
+# MODERATION SECURITY
+# ==========================================
+
 def can_moderate(interaction, member):
-    if member.id == interaction.user.id:
+
+    guild = interaction.guild
+    moderator = interaction.user
+    bot_member = guild.me
+
+    if member.id == moderator.id:
         return False, "You cannot moderate yourself."
 
-    if member.id == interaction.guild.owner_id:
+    if member.id == guild.owner_id:
         return False, "You cannot moderate the server owner."
 
-    if member.id == bot.user.id:
+    if bot.user and member.id == bot.user.id:
         return False, "You cannot moderate KnoxBot."
 
-    if member.top_role >= interaction.user.top_role:
+    if (
+        moderator.id != guild.owner_id
+        and member.top_role >= moderator.top_role
+    ):
         return False, "That member has an equal or higher role than you."
 
-    if member.top_role >= interaction.guild.me.top_role:
+    if bot_member and member.top_role >= bot_member.top_role:
         return False, "That member has an equal or higher role than KnoxBot."
 
     return True, None
 
 
+# ==========================================
+# MODERATION EMBEDS
+# ==========================================
+
 def moderation_embed(action, member, moderator, reason):
+
     embed = discord.Embed(
         title=f"KnoxBot | {action}",
         color=discord.Color.blurple()
@@ -154,12 +189,23 @@ def moderation_embed(action, member, moderator, reason):
         inline=False
     )
 
-    embed.set_footer(text="KnoxBot Moderation System")
+    embed.set_footer(
+        text="KnoxBot Moderation System"
+    )
+
     return embed
 
 
-@bot.tree.command(name="ping", description="Check KnoxBot's response time.")
+# ==========================================
+# PING COMMAND
+# ==========================================
+
+@bot.tree.command(
+    name="ping",
+    description="Check KnoxBot's response time."
+)
 async def ping(interaction: discord.Interaction):
+
     latency = round(bot.latency * 1000)
 
     await interaction.response.send_message(
@@ -168,7 +214,14 @@ async def ping(interaction: discord.Interaction):
     )
 
 
-@bot.tree.command(name="ban", description="Ban a member from your server.")
+# ==========================================
+# BAN COMMAND
+# ==========================================
+
+@bot.tree.command(
+    name="ban",
+    description="Ban a member from your server."
+)
 @app_commands.describe(
     member="The member to ban",
     reason="Why this member is being banned"
@@ -180,20 +233,27 @@ async def ban(
     member: discord.Member,
     reason: str = "No reason provided"
 ):
+
     allowed, error = can_moderate(interaction, member)
 
     if not allowed:
         return await interaction.response.send_message(
-            error, ephemeral=True
+            error,
+            ephemeral=True
         )
 
     await interaction.response.defer(ephemeral=True)
 
     try:
-        await member.ban(reason=f"{reason} | Moderator: {interaction.user}")
+        await member.ban(
+            reason=f"{reason} | Moderator: {interaction.user}"
+        )
 
         recorded = await save_case(
-            interaction, member, "BAN", reason
+            interaction,
+            member,
+            "BAN",
+            reason
         )
 
         await interaction.followup.send(
@@ -208,7 +268,14 @@ async def ban(
         )
 
 
-@bot.tree.command(name="kick", description="Kick a member from your server.")
+# ==========================================
+# KICK COMMAND
+# ==========================================
+
+@bot.tree.command(
+    name="kick",
+    description="Kick a member from your server."
+)
 @app_commands.describe(
     member="The member to kick",
     reason="Why this member is being kicked"
@@ -220,11 +287,13 @@ async def kick(
     member: discord.Member,
     reason: str = "No reason provided"
 ):
+
     allowed, error = can_moderate(interaction, member)
 
     if not allowed:
         return await interaction.response.send_message(
-            error, ephemeral=True
+            error,
+            ephemeral=True
         )
 
     await interaction.response.defer(ephemeral=True)
@@ -235,7 +304,10 @@ async def kick(
         )
 
         recorded = await save_case(
-            interaction, member, "KICK", reason
+            interaction,
+            member,
+            "KICK",
+            reason
         )
 
         await interaction.followup.send(
@@ -249,7 +321,14 @@ async def kick(
         )
 
 
-@bot.tree.command(name="timeout", description="Timeout a server member.")
+# ==========================================
+# TIMEOUT COMMAND
+# ==========================================
+
+@bot.tree.command(
+    name="timeout",
+    description="Timeout a server member."
+)
 @app_commands.describe(
     member="The member to timeout",
     minutes="Timeout duration in minutes (1-40320)",
@@ -263,11 +342,13 @@ async def timeout(
     minutes: app_commands.Range[int, 1, 40320],
     reason: str = "No reason provided"
 ):
+
     allowed, error = can_moderate(interaction, member)
 
     if not allowed:
         return await interaction.response.send_message(
-            error, ephemeral=True
+            error,
+            ephemeral=True
         )
 
     await interaction.response.defer(ephemeral=True)
@@ -276,12 +357,16 @@ async def timeout(
         duration = minutes * 60
 
         await member.timeout(
-            discord.utils.utcnow() + __import__("datetime").timedelta(minutes=minutes),
+            discord.utils.utcnow() + timedelta(minutes=minutes),
             reason=f"{reason} | Moderator: {interaction.user}"
         )
 
         recorded = await save_case(
-            interaction, member, "TIMEOUT", reason, duration
+            interaction,
+            member,
+            "TIMEOUT",
+            reason,
+            duration
         )
 
         await interaction.followup.send(
@@ -296,7 +381,14 @@ async def timeout(
         )
 
 
-@bot.tree.command(name="warn", description="Issue a formal warning.")
+# ==========================================
+# WARN COMMAND
+# ==========================================
+
+@bot.tree.command(
+    name="warn",
+    description="Issue a formal warning."
+)
 @app_commands.describe(
     member="The member to warn",
     reason="Reason for the warning"
@@ -307,17 +399,22 @@ async def warn(
     member: discord.Member,
     reason: str
 ):
+
     allowed, error = can_moderate(interaction, member)
 
     if not allowed:
         return await interaction.response.send_message(
-            error, ephemeral=True
+            error,
+            ephemeral=True
         )
 
     await interaction.response.defer(ephemeral=True)
 
     recorded = await save_case(
-        interaction, member, "WARN", reason
+        interaction,
+        member,
+        "WARN",
+        reason
     )
 
     try:
@@ -329,6 +426,7 @@ async def warn(
                 reason
             )
         )
+
         dm_status = "Member notified by DM."
 
     except discord.Forbidden:
@@ -340,6 +438,10 @@ async def warn(
         f"Case recorded: {'Yes' if recorded else 'No'}"
     )
 
+
+# ==========================================
+# COMMAND ERROR HANDLING
+# ==========================================
 
 @bot.tree.error
 async def command_error(interaction, error):
@@ -356,12 +458,18 @@ async def command_error(interaction, error):
 
     if interaction.response.is_done():
         await interaction.followup.send(
-            message, ephemeral=True
+            message,
+            ephemeral=True
         )
     else:
         await interaction.response.send_message(
-            message, ephemeral=True
+            message,
+            ephemeral=True
         )
 
+
+# ==========================================
+# START KNOXBOT
+# ==========================================
 
 bot.run(TOKEN)
